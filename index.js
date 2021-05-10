@@ -1,7 +1,8 @@
 const telegramApi = require('node-telegram-bot-api')
-
-const token = '1864964603:AAE_7xRttf4PqAFTKp74-WJqZWIcqQgKhu4'
 const { gameOptions, againOptions } = require('./options')
+const sequelize = require('./db')
+const UserModel = require('./models')
+const token = '1864964603:AAE_7xRttf4PqAFTKp74-WJqZWIcqQgKhu4'
 const bot = new telegramApi(token, { polling: true })
 
 const chats = {}
@@ -16,7 +17,15 @@ const startGame = async (chatId) => {
     await bot.sendMessage(chatId, 'Отгадывай', gameOptions)
 }
 
-const start = () => {
+const start = async () => {
+
+    try {
+        await sequelize.authenticate()
+        await sequelize.sync()
+
+    } catch (e) {
+        console.log('Подключение к дб', e)
+    }
     bot.setMyCommands([
         { command: '/start', description: 'Начало работы' },
         { command: '/info', description: 'Получить информацию о пользователе' },
@@ -26,18 +35,27 @@ const start = () => {
     bot.on('message', async msg => {
         const text = msg.text;
         const chatId = msg.chat.id;
-        if (text === '/start') {
-            await bot.sendSticker(chatId, 'https://tlgrm.eu/_/stickers/385/a4b/385a4bf5-3feb-3008-be6e-1074767a1f3d/11.webp')
-            return bot.sendMessage(chatId, `Добро пожаловать в мой первый телеграм бот`)
+
+        try {
+            if (text === '/start') {
+                await UserModel.create({ chatId })
+                await bot.sendSticker(chatId, 'https://tlgrm.eu/_/stickers/385/a4b/385a4bf5-3feb-3008-be6e-1074767a1f3d/11.webp')
+                return bot.sendMessage(chatId, `Добро пожаловать в мой первый телеграм бот`)
+            }
+            if (text === '/info') {
+                const user = await UserModel.findOne({ chatId })
+                return bot.sendMessage(chatId, `Тебя зовут ${msg.from.first_name} ${msg.from.last_name}, в игре у тебя правильных ответов: ${user.right} и неправильных ответов: ${user.wrong}  `)
+            }
+            if (text === '/game') {
+                return startGame(chatId)
+            }
+            await bot.sendSticker(chatId, 'https://tlgrm.eu/_/stickers/385/a4b/385a4bf5-3feb-3008-be6e-1074767a1f3d/12.webp')
+            return bot.sendMessage(chatId, 'Я тебя не понимаю, попробуй ещё раз!')
+
+        } catch (e) {
+            return bot.sendMessage(chatId, 'Произошла какая то ошибка')
+
         }
-        if (text === '/info') {
-            return bot.sendMessage(chatId, `Тебя зовут ${msg.from.first_name} ${msg.from.last_name}`)
-        }
-        if (text === '/game') {
-            return startGame(chatId)
-        }
-        await bot.sendSticker(chatId, 'https://tlgrm.eu/_/stickers/385/a4b/385a4bf5-3feb-3008-be6e-1074767a1f3d/12.webp')
-        return bot.sendMessage(chatId, 'Я тебя не понимаю, попробуй ещё раз!')
 
     })
     bot.on('callback_query', async msg => {
@@ -46,14 +64,17 @@ const start = () => {
         if (data === '/again') {
             return startGame(chatId);
         }
-        if (data === chats[chatId]) {
+        const user = await UserModel.findOne({ chatId })
+        if (data == chats[chatId]) {
+            user.right += 1;
             await bot.sendSticker(chatId, `https://tlgrm.eu/_/stickers/385/a4b/385a4bf5-3feb-3008-be6e-1074767a1f3d/192/9.webp`, againOptions)
-            return bot.sendMessage(chatId, `Поздравляю! Ты угадал! Это была цифра ${chats[chatId]}`)
+            await bot.sendMessage(chatId, `Поздравляю! Ты угадал! Это была цифра ${chats[chatId]}`)
         } else {
+            user.wrong += 1;
             await bot.sendSticker(chatId, `https://tlgrm.eu/_/stickers/385/a4b/385a4bf5-3feb-3008-be6e-1074767a1f3d/192/7.webp`, againOptions)
-            return await bot.sendMessage(chatId, `Ты не угадал, я загадал цифру ${chats[chatId]}`)
+            await bot.sendMessage(chatId, `Ты не угадал, я загадал цифру ${chats[chatId]}`)
         }
-        bot.sendMessage(chatId, `Ты выбрал цифру ${data}`)
+        await user.save();
     })
 }
 
